@@ -40,7 +40,7 @@ def test_calculator_add(page, fastapi_server):
     
     # Click the button that has the exact text "Add". This triggers the addition operation.
     page.click('button:text("Add")')
-    
+    page.wait_for_selector('#result')
     # Use an assertion to check that the text within the result div (with id 'result') is exactly "Result: 15".
     # This verifies that the addition operation was performed correctly and the result is displayed as expected.
     assert page.inner_text('#result') == 'Result: 15'
