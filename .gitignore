@@ -5,4 +5,4 @@ __pycache__/
 .coverage
 .pytest_cache
 htmlcov
-test.yml
+.github
