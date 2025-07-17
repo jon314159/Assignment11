@@ -158,3 +158,4 @@ def test_error_handling():
     with pytest.raises(Exception, match="INVALID SQL"):
         with managed_db_session() as session:
             session.execute(text("INVALID SQL"))
+

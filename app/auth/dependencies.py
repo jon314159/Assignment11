@@ -28,16 +28,3 @@ def get_current_user(db: Session, token: str = Depends(oauth2_scheme)) -> UserRe
         raise credentials_exception
 
     return UserResponse.model_validate(user)
-
-
-def get_current_active_user(current_user: UserResponse = Depends(get_current_user)) -> UserResponse:
-    """
-    Ensure the current user is active.
-    Raises HTTPException if the user is not active.
-    """
-    if not current_user.is_verified:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Inactive user",
-        )
-    return current_user

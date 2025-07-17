@@ -50,13 +50,16 @@ def create_fake_user() -> Dict[str, str]:
     Returns:
         A dict containing user fields with fake data.
     """
+    username = ''.join(fake.random_choices('abcdefghijklmnopqrstuvwxyz0123456789', length=8))
+    password = "SecurePass123!"  # guaranteed to meet policy
     return {
         "first_name": fake.first_name(),
         "last_name": fake.last_name(),
         "email": fake.unique.email(),  # Ensure uniqueness where necessary
-        "username": fake.unique.user_name(),
-        "password": fake.password(length=12)
+        "username": username,
+        "password": password
     }
+
 
 @contextmanager
 def managed_db_session():

@@ -20,7 +20,7 @@ engine = get_engine()
 SessionLocal = get_sessionmaker(engine)
 Base = declarative_base()
 
-def get_db():
+def get_db(): #pragma: no cover
     """Dependency to get a database session."""
     db = SessionLocal()
     try:

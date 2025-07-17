@@ -4,7 +4,7 @@ from fastapi import HTTPException, status
 from uuid import uuid4
 from datetime import datetime
 
-from app.auth.dependencies import get_current_user, get_current_active_user
+from app.auth.dependencies import get_current_user
 from app.schemas.user import UserResponse
 from app.models.user import User
 

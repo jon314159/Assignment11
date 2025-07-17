@@ -13,8 +13,6 @@ class UserBase(BaseModel):
     @field_validator("username")
     @classmethod
     def validate_username(cls, v):
-        if " " in v:
-            raise ValueError("Username cannot contain spaces")
         if not v.isalnum():
             raise ValueError("Username must be alphanumeric")
         return v

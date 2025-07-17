@@ -22,4 +22,5 @@ def fake_user_data():
         "last_name": faker.last_name(),
         "email": faker.email(),
         "username": faker.user_name(),
+        "password": "Aa1!" + faker.password(length=8, special_chars=True, digits=True, upper_case=True, lower_case=True)
     }
