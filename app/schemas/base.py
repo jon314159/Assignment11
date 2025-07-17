@@ -42,6 +42,8 @@ class PasswordMixin(BaseModel):
             raise ValueError("Password must contain at least one letter")
         if not any(char in "!@#$%^&*()-_=+[]{}|;:,.<>?/" for char in password):
             raise ValueError("Password must contain at least one special character")
+        if not any(char.isalpha() for char in password):
+            raise ValueError("Password must contain at least one letter")
         return values
 
 

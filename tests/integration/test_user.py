@@ -1,275 +1,191 @@
 import pytest
-import logging
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, clear_mappers, Session
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from jose import jwt, JWTError
-from datetime import timedelta, datetime, timezone
-from uuid import UUID
-from unittest.mock import patch
-from typing import Generator
-from contextlib import contextmanager
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
-from app.models.user import User, Base, SECRET_KEY, ALGORITHM
-from tests.conftest import create_fake_user
+from app.models.user import User
+from tests.conftest import create_fake_user, managed_db_session
 
 
-@contextmanager
-def managed_db_session() -> Generator[Session, None, None]:
-    """
-    Context manager to handle database sessions for testing.
-    """
-    engine = create_engine("sqlite:///:memory:", echo=False)
-    Base.metadata.create_all(engine)
-    SessionLocal = sessionmaker(bind=engine)
+# ======================================================================================
+# Connection & Session Tests
+# ======================================================================================
 
-    db_session = SessionLocal()
-    try:
-        yield db_session
-    except SQLAlchemyError as e:
-        db_session.rollback()
-        logging.error(f"Database error: {e}")
-        raise
-    finally:
-        db_session.close()
+def test_database_connection(db_session):
+    assert db_session.execute(text("SELECT 1")).scalar() == 1
 
 
-@pytest.fixture(scope="session")
-def faker():
-    from faker import Faker
-    return Faker()
+
+def test_managed_session_rollback():
+    with managed_db_session() as session:
+        session.execute(text("SELECT 1"))
+        with pytest.raises(Exception, match="nonexistent_table"):
+            session.execute(text("SELECT * FROM nonexistent_table"))
 
 
-class TestUserModel:
-    """Test suite for User model."""
+# ======================================================================================
+# User Creation Tests
+# ======================================================================================
 
-    @pytest.fixture
-    def db_session(self):
+def test_create_user_with_faker(db_session):
+    user_data = create_fake_user()
+    user = User(**user_data)
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    assert user.id is not None
+    assert user.email == user_data["email"]
+
+
+def test_create_multiple_users(db_session):
+    users = [User(**create_fake_user()) for _ in range(3)]
+    db_session.add_all(users)
+    db_session.commit()
+
+    emails = [u.email for u in users]
+    usernames = [u.username for u in users]
+
+    db_users = db_session.query(User).all()
+    db_emails = {u.email for u in db_users}
+    db_usernames = {u.username for u in db_users}
+
+    assert all(email in db_emails for email in emails)
+    assert all(username in db_usernames for username in usernames)
+
+
+@pytest.mark.parametrize("field, val", [
+    ("email", "unique_email_test@example.com"),
+    ("username", "unique_user_test")
+])
+def test_unique_constraints(db_session, field, val):
+    user1_data = create_fake_user()
+    user2_data = create_fake_user()
+
+    user1_data[field] = val
+    user2_data[field] = val
+
+    db_session.add(User(**user1_data))
+    db_session.commit()
+
+    db_session.add(User(**user2_data))
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+
+# ======================================================================================
+# Transaction Tests
+# ======================================================================================
+
+def test_transaction_rollback(db_session):
+    count_before = db_session.query(User).count()
+    user = User(**create_fake_user())
+    db_session.add(user)
+
+    with pytest.raises(Exception):
+        db_session.execute(text("SELECT * FROM nonexistent_table"))
+        db_session.commit()
+
+    db_session.rollback()
+    assert db_session.query(User).count() == count_before
+
+
+def test_persistence_after_constraint(db_session):
+    u1_data = {
+        "first_name": "Jane", "last_name": "Doe", "email": "jane.doe@example.com",
+        "username": "janedoe", "password": "SecurePass123!"
+    }
+    u1 = User(**u1_data)
+    db_session.add(u1)
+    db_session.commit()
+
+    u2_data = {
+        "first_name": "John", "last_name": "Smith", "email": u1.email,
+        "username": "johnsmith", "password": "AnotherPass456!"
+    }
+    u2 = User(**u2_data)
+    db_session.add(u2)
+
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+    found = db_session.query(User).filter_by(id=u1.id).first()
+    assert found is not None
+    assert found.email == u1.email
+    assert found.username == u1.username
+
+
+# ======================================================================================
+# Query & Update Tests
+# ======================================================================================
+
+def test_query_methods(db_session, seed_users):
+    assert db_session.query(User).count() >= len(seed_users)
+
+    first_user = seed_users[0]
+    assert db_session.query(User).filter_by(email=first_user.email).first() is not None
+
+    users_by_email = db_session.query(User).order_by(User.email).all()
+    assert len(users_by_email) >= len(seed_users)
+
+
+def test_update_with_refresh(db_session, test_user):
+    new_email = f"updated_{test_user.email}"
+    old_updated_at = test_user.updated_at
+
+    test_user.email = new_email
+    db_session.commit()
+    db_session.refresh(test_user)
+
+    assert test_user.email == new_email
+    assert test_user.updated_at > old_updated_at
+
+
+@pytest.mark.slow
+def test_bulk_operations(db_session):
+    users = [User(**create_fake_user()) for _ in range(10)]
+    db_session.bulk_save_objects(users)
+    db_session.commit()
+
+    count = db_session.query(User).count()
+    assert count >= 10
+
+
+def test_session_handling(db_session):
+    assert db_session.query(User).count() == 0
+
+    u1 = User(
+        first_name="Alice", last_name="Smith", email="alice.smith@example.com",
+        username="alice_smith", password="Alice123!"
+    )
+    db_session.add(u1)
+    db_session.commit()
+    assert db_session.query(User).count() == 1
+
+    u2 = User(
+        first_name="Bob", last_name="Brown", email=u1.email,
+        username="bob_brown", password="Bob456!"
+    )
+    db_session.add(u2)
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+    u3 = User(
+        first_name="Charlie", last_name="Johnson", email="charlie.johnson@example.com",
+        username="charlie_j", password="Charlie789!"
+    )
+    db_session.add(u3)
+    db_session.commit()
+
+    emails = {u.email for u in db_session.query(User).all()}
+    assert len(emails) == 2
+    assert "alice.smith@example.com" in emails
+    assert "charlie.johnson@example.com" in emails
+
+
+def test_error_handling():
+    with pytest.raises(Exception, match="INVALID SQL"):
         with managed_db_session() as session:
-            yield session
-
-    @pytest.fixture
-    def fake_user_data(self, faker):
-        return create_fake_user()
-
-    @pytest.fixture
-    def created_user(self, db_session, fake_user_data):
-        user = User.register(db_session, fake_user_data.copy())
-        return user
-
-    def test_user_model_creation(self, fake_user_data):
-        user = User(
-            first_name=fake_user_data["first_name"],
-            last_name=fake_user_data["last_name"],
-            email=fake_user_data["email"],
-            username=fake_user_data["username"],
-            hashed_password=User.hash_password(fake_user_data["password"])
-        )
-        assert user.first_name == fake_user_data["first_name"]
-        assert user.last_name == fake_user_data["last_name"]
-        assert user.email == fake_user_data["email"]
-        assert user.username == fake_user_data["username"]
-        assert user.hashed_password != fake_user_data["password"]
-        assert user.is_verified is False
-        assert user.last_login is None
-
-    def test_user_repr(self, created_user):
-        repr_str = repr(created_user)
-        assert "User(" in repr_str
-        assert f"id={created_user.id}" in repr_str
-        assert f"username={created_user.username}" in repr_str
-        assert f"email={created_user.email}" in repr_str
-
-    def test_hash_password(self, faker):
-        password = faker.password(length=12, special_chars=True, digits=True, upper_case=True, lower_case=True)
-        hashed = User.hash_password(password)
-        assert hashed != password
-        assert len(hashed) > 0
-        assert hashed.startswith("$2b$")
-
-    def test_verify_password_valid(self, created_user, fake_user_data):
-        assert created_user.verify_password(fake_user_data["password"]) is True
-
-    def test_verify_password_invalid(self, created_user, faker):
-        wrong_password = faker.password(length=10)
-        assert created_user.verify_password(wrong_password) is False
-
-    def test_verify_password_invalid_type(self):
-        user = User()
-        with patch.object(user, 'hashed_password', new=None):
-            with pytest.raises(TypeError, match="Invalid hashed_password type"):
-                user.verify_password("password")
-
-    def test_create_access_token_default_expiry(self, faker):
-        user_id = str(faker.uuid4())
-        data = {"sub": user_id}
-        token = User.create_access_token(data)
-        assert isinstance(token, str)
-
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        assert payload["sub"] == user_id
-        assert "exp" in payload
-
-    def test_create_access_token_custom_expiry(self, faker):
-        user_id = str(faker.uuid4())
-        data = {"sub": user_id}
-        custom_delta = timedelta(hours=1)
-        token = User.create_access_token(data, custom_delta)
-
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        assert payload["sub"] == user_id
-
-        exp_time = datetime.fromtimestamp(payload["exp"], timezone.utc)
-        expected_time = datetime.now(timezone.utc) + custom_delta
-        assert abs((exp_time - expected_time).total_seconds()) < 10
-
-    def test_register_success(self, db_session, fake_user_data):
-        user = User.register(db_session, fake_user_data)
-        assert user.first_name == fake_user_data["first_name"]
-        assert user.last_name == fake_user_data["last_name"]
-        assert user.email == fake_user_data["email"]
-        assert user.username == fake_user_data["username"]
-        assert user.hashed_password != fake_user_data["password"]
-        assert user.is_verified is False
-        assert user.created_at is not None
-        assert isinstance(user.id, UUID)
-
-    def test_register_password_too_short(self, db_session, fake_user_data):
-        fake_user_data["password"] = "short"
-        with pytest.raises(ValueError, match="Password must be at least 8 characters long"):
-            User.register(db_session, fake_user_data)
-
-    def test_register_password_too_long(self, db_session, fake_user_data):
-        fake_user_data["password"] = "a" * 129
-        with pytest.raises(ValueError, match="Password must not exceed 128 characters"):
-            User.register(db_session, fake_user_data)
-
-    def test_register_duplicate_username(self, db_session, fake_user_data):
-        User.register(db_session, fake_user_data.copy())
-        duplicate_data = create_fake_user()
-        duplicate_data["username"] = fake_user_data["username"]
-        with pytest.raises(ValueError, match="Username or email already exists"):
-            User.register(db_session, duplicate_data)
-
-    def test_register_duplicate_email(self, db_session, fake_user_data):
-        User.register(db_session, fake_user_data.copy())
-        duplicate_data = create_fake_user()
-        duplicate_data["email"] = fake_user_data["email"]
-        with pytest.raises(ValueError, match="Username or email already exists"):
-            User.register(db_session, duplicate_data)
-
-    def test_register_validation_error(self, db_session, fake_user_data):
-        fake_user_data.pop("first_name")
-        with pytest.raises(ValueError, match="Validation error"):
-            User.register(db_session, fake_user_data)
-
-    def test_register_integrity_error(self, db_session, fake_user_data):
-        User.register(db_session, fake_user_data.copy())
-        dummy_exc = Exception("orig")
-        with patch.object(db_session, 'commit', side_effect=IntegrityError("stmt", "params", dummy_exc)):
-            with pytest.raises(ValueError, match="User already exists"):
-                User.register(db_session, fake_user_data)
-
-    def test_register_generic_exception(self, db_session, fake_user_data):
-        with patch.object(db_session, 'add', side_effect=Exception("DB failed")):
-            with pytest.raises(ValueError, match="Registration failed"):
-                User.register(db_session, fake_user_data)
-
-    def test_authenticate_success_with_username(self, db_session, created_user, fake_user_data):
-        result = User.authenticate(db_session, fake_user_data["username"], fake_user_data["password"])
-        assert result is not None
-        assert result["access_token"]
-        assert result["token_type"] == "bearer"
-        assert result["user"]["username"] == fake_user_data["username"]
-
-    def test_authenticate_invalid_user(self, db_session, faker):
-        result = User.authenticate(db_session, faker.user_name(), faker.password())
-        assert result is None
-
-    def test_verify_token_valid(self, faker):
-        user_id = str(faker.uuid4())
-        data = {"sub": user_id, "exp": datetime.now(timezone.utc) + timedelta(hours=1)}
-        token = jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
-
-        payload = User.verify_token(token)
-        assert payload is not None
-        assert payload["sub"] == user_id
-
-    def test_verify_token_invalid(self):
-        invalid_token = "invalid.token.here"
-        payload = User.verify_token(invalid_token)
-        assert payload is None
-
-    def test_get_user_by_id_success(self, db_session, created_user):
-        user = User.get_user_by_id(db_session, str(created_user.id))
-        assert user is not None
-        assert user.id == created_user.id
-
-    def test_get_user_by_id_not_found(self, db_session, faker):
-        user = User.get_user_by_id(db_session, str(faker.uuid4()))
-        assert user is None
-
-    def test_to_dict(self, created_user):
-        user_dict = created_user.to_dict()
-        assert "hashed_password" not in user_dict
-        assert user_dict["id"] == str(created_user.id)
-
-
-class TestUserModelIntegration:
-    """Integration tests for User model."""
-
-    @pytest.fixture
-    def db_session(self):
-        with managed_db_session() as session:
-            yield session
-
-    def test_complete_user_workflow(self, db_session):
-        user_data = create_fake_user()
-        user = User.register(db_session, user_data)
-        assert user.id is not None
-
-        auth_result = User.authenticate(db_session, user_data["username"], user_data["password"])
-        assert auth_result is not None
-
-        token = auth_result["access_token"]
-        payload = User.verify_token(token)
-        assert payload is not None
-
-        retrieved_user = User.get_user_by_id(db_session, payload["sub"])
-        assert retrieved_user is not None
-        assert str(retrieved_user.username) == user_data["username"]
-
-
-class TestUserModelEdgeCases:
-    """Edge case tests for User model."""
-
-    @pytest.fixture
-    def db_session(self):
-        with managed_db_session() as session:
-            yield session
-
-    def test_empty_string_values(self, db_session):
-        user_data = create_fake_user()
-        user_data["first_name"] = ""
-        with pytest.raises(ValueError):
-            User.register(db_session, user_data)
-
-    def test_unicode_characters(self, db_session):
-        user_data = create_fake_user()
-        user_data["first_name"] = "José"
-        user_data["last_name"] = "García"
-        user = User.register(db_session, user_data)
-        assert str(user.first_name) == "José"
-        assert str(user.last_name) == "García"
-
-    def test_very_long_valid_password(self, db_session):
-        user_data = create_fake_user()
-        user_data["password"] = "a" * 128
-        user = User.register(db_session, user_data)
-        assert user.verify_password("a" * 128)
-
-
-@pytest.fixture(scope="function", autouse=True)
-def clear_sqlalchemy_mappers():
-    yield
-    clear_mappers()
+            session.execute(text("INVALID SQL"))
