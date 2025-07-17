@@ -5,6 +5,20 @@ import time
 import pytest
 from playwright.sync_api import sync_playwright
 import requests
+import logging
+from typing import Generator, Dict, List
+from contextlib import contextmanager
+import requests
+from faker import Faker
+from playwright.sync_api import sync_playwright, Browser, Page
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+
+from app.database import Base, get_engine, get_sessionmaker
+from app.models.user import User
+from app.config import settings
+from app.database_init import init_db, drop_db
 
 @pytest.fixture(scope='session')
 def fastapi_server():
@@ -72,3 +86,28 @@ def page(browser):
     page = browser.new_page()
     yield page
     page.close()
+
+def create_fake_user() -> Dict[str, str]:
+    return {
+        "username": Faker().user_name(),
+        "email": Faker().email(),
+        "first_name": Faker().first_name(),
+        "last_name": Faker().last_name(),
+        "password": Faker().password(length=12, special_chars=True, digits=True, upper_case=True, lower_case=True)
+    }
+def managed_db_session() -> Generator[Session, None, None]:
+    """
+    Context manager to handle database sessions.
+    """
+    engine = get_engine()
+    SessionLocal = get_sessionmaker(engine)
+    
+    db_session = SessionLocal()
+    try:
+        yield db_session
+    except SQLAlchemyError as e:
+        db_session.rollback()
+        print(f"Database error: {e}")
+        raise
+    finally:
+        db_session.close()

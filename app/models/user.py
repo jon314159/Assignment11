@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta
+import os
+from datetime import datetime, timedelta, timezone
 import uuid
 from typing import Optional, Dict, Any
 
@@ -7,7 +8,7 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.exc import IntegrityError
 from passlib.context import CryptContext
-from jose import jwt
+from jose import jwt, JWTError
 from pydantic import ValidationError
 
 from app.schemas.base import UserCreate
@@ -17,9 +18,10 @@ Base = declarative_base()
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-SECRET_KEY = "your_secret_key_here"
+# Load secret key from environment variables
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-fallback-key-change-in-production")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
 
 class User(Base):
@@ -33,8 +35,9 @@ class User(Base):
     username = Column(String, unique=True, nullable=False, index=True)
     hashed_password = Column(String, nullable=False)
     is_verified = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_login = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     def __repr__(self):
         return f"<User(id={self.id}, username={self.username}, email={self.email})>"
@@ -46,13 +49,18 @@ class User(Base):
 
     def verify_password(self, password: str) -> bool:
         """Verify a password against the hashed password."""
-        return pwd_context.verify(password, self.password)
+        # Defensive check to avoid passing Column object
+        if not isinstance(self.hashed_password, str):
+            raise TypeError(
+                f"Invalid hashed_password type: expected str, got {type(self.hashed_password)}"
+            )
+        return pwd_context.verify(password, self.hashed_password)
 
     @staticmethod
     def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
         """Create a JWT access token."""
         to_encode = data.copy()
-        expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+        expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
         to_encode.update({"exp": expire})
         return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -62,11 +70,13 @@ class User(Base):
         try:
             password = user_data.pop("password")
 
+            # Validate password length
             if len(password) < 8:
                 raise ValueError("Password must be at least 8 characters long.")
             if len(password) > 128:
                 raise ValueError("Password must not exceed 128 characters.")
 
+            # Check for existing user
             existing_user = db.query(cls).filter(
                 (cls.username == user_data["username"]) |
                 (cls.email == user_data["email"])
@@ -74,7 +84,10 @@ class User(Base):
             if existing_user:
                 raise ValueError("Username or email already exists.")
 
+            # Validate user data with Pydantic
             user_create = UserCreate.model_validate(user_data)
+            
+            # Create new user instance
             new_user = cls(
                 first_name=user_create.first_name,
                 last_name=user_create.last_name,
@@ -82,7 +95,7 @@ class User(Base):
                 username=user_create.username,
                 hashed_password=cls.hash_password(password),
                 is_verified=user_create.model_dump().get("is_verified", False),
-                created_at=datetime.utcnow()
+                created_at=datetime.now(timezone.utc)
             )
 
             db.add(new_user)
@@ -91,31 +104,81 @@ class User(Base):
             return new_user
 
         except ValidationError as e:
-            raise ValueError(f"Validation error: {e}")
+            db.rollback()
+            raise ValueError(f"Validation error: {str(e)}")
         except IntegrityError as e:
-            raise ValueError(f"Integrity error: {e.orig}")
-        except ValueError as e:
-            raise ValueError(f"Value error: {e}")
+            db.rollback()
+            raise ValueError(f"User already exists: {str(e.orig)}")
+        except Exception as e:
+            db.rollback()
+            raise ValueError(f"Registration failed: {str(e)}")
 
     @classmethod
     def authenticate(cls, db, identifier: str, password: str) -> Optional[Dict[str, Any]]:
         """Authenticate user by username or email and return token with user data."""
-        user = db.query(cls).filter(
-            (cls.username == identifier) | (cls.email == identifier)
-        ).first()
+        try:
+            user = db.query(cls).filter(
+                (cls.username == identifier) | (cls.email == identifier)
+            ).first()
 
-        if not user or not user.verify_password(password):
-            return None  # pragma: no cover
+            # Ensure instance exists and password matches
+            if not user or not user.verify_password(password):
+                return None
 
-        user.last_login = datetime.utcnow()
+            # Update last login timestamp
+            user.last_login = datetime.now(timezone.utc)
+            db.commit()
+            db.refresh(user)
+
+            # Create response objects
+            user_response = UserResponse.model_validate(user)
+            token_response = Token(
+                access_token=cls.create_access_token(data={"sub": str(user.id)}),
+                token_type="bearer",
+                user=user_response
+            )
+
+            return token_response.model_dump()
+
+        except Exception as e:
+            db.rollback()
+            # Log the error but don't expose internal details
+            # logger.error(f"Authentication error: {str(e)}")
+            return None
+
+    @classmethod
+    def verify_token(cls, token: str) -> Optional[Dict[str, Any]]:
+        """Verify JWT token and return payload."""
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            return payload
+        except JWTError:
+            return None
+
+    @classmethod
+    def get_user_by_id(cls, db, user_id: str) -> Optional["User"]:
+        """Get user by ID."""
+        try:
+            user_uuid = uuid.UUID(user_id)
+            return db.query(cls).filter(cls.id == user_uuid).first()
+        except (ValueError, TypeError):
+            return None
+
+    def update_last_login(self, db):
+        """Update the user's last login timestamp."""
+        self.last_login = datetime.now(timezone.utc)
         db.commit()
-        db.refresh(user)
 
-        user_response = UserResponse.model_validate(user)
-        token_response = Token(
-            access_token=cls.create_access_token(data={"sub": str(user.id)}),
-            token_type="bearer",
-            user=user_response
-        )
-
-        return token_response.model_dump()
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert user object to dictionary (excluding sensitive data)."""
+        return {
+            "id": str(self.id),
+            "first_name": self.first_name,
+            "last_name": self.last_name,
+            "email": self.email,
+            "username": self.username,
+            "is_verified": self.is_verified,
+            "last_login": self.last_login.isoformat() if self.last_login is not None else None,
+            "created_at": self.created_at.isoformat() if self.created_at is not None else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at is not None else None,
+        }

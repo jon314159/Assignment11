@@ -5,7 +5,7 @@ from app.schemas.user import UserResponse
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-def get_current_user(token: str = Depends(oauth2_scheme)) -> UserResponse:
+def get_current_user(db, token: str = Depends(oauth2_scheme)) -> UserResponse:
     """
     Retrieve the current user based on the provided token.
     Raises HTTPException if the token is invalid or user not found.
