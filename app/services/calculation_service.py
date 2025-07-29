@@ -2,8 +2,8 @@
 
 from sqlalchemy.orm import Session
 from app.models.calculation import Calculation
-from app. import CalculationFactory
-from app.schemas.calculation import CalculationCreate
+from app.utils.calculator import CalculationFactory
+from app.schemas.CalculationCreate import CalculationCreate
 
 
 def create_calculation(payload: CalculationCreate, user_id: str, db: Session) -> Calculation:
