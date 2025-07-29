@@ -16,6 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
 from app.database import Base, get_engine, get_sessionmaker
 from app.models.user import User
+from app.models.calculation import Calculation  # ✅ Ensures 'calculations' table is known
 from app.config import settings
 from app.database_init import init_db, drop_db
 
@@ -44,33 +45,18 @@ TestingSessionLocal = get_sessionmaker(engine=test_engine)
 # Helper Functions
 # ======================================================================================
 def create_fake_user() -> Dict[str, str]:
-    """
-    Generate a dictionary of fake user data for testing.
-
-    Returns:
-        A dict containing user fields with fake data.
-    """
     username = ''.join(fake.random_choices('abcdefghijklmnopqrstuvwxyz0123456789', length=8))
-    password = "SecurePass123!"  # guaranteed to meet policy
+    password = "SecurePass123!"
     return {
         "first_name": fake.first_name(),
         "last_name": fake.last_name(),
-        "email": fake.unique.email(),  # Ensure uniqueness where necessary
+        "email": fake.unique.email(),
         "username": username,
         "password": password
     }
 
-
 @contextmanager
 def managed_db_session():
-    """
-    Context manager for safe database session handling.
-    Automatically handles rollback and cleanup.
-
-    Example:
-        with managed_db_session() as session:
-            user = session.query(User).first()
-    """
     session = TestingSessionLocal()
     try:
         yield session
@@ -85,9 +71,6 @@ def managed_db_session():
 # Server Startup / Healthcheck
 # ======================================================================================
 def wait_for_server(url: str, timeout: int = 30) -> bool:
-    """
-    Wait for server to be ready, raising an error if it never becomes available.
-    """
     start_time = time.time()
     while (time.time() - start_time) < timeout:
         try:
@@ -100,7 +83,6 @@ def wait_for_server(url: str, timeout: int = 30) -> bool:
     return False
 
 class ServerStartupError(Exception):
-    """Raised when the test server fails to start properly"""
     pass
 
 # ======================================================================================
@@ -108,31 +90,19 @@ class ServerStartupError(Exception):
 # ======================================================================================
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_database(request):
-    """
-    Initialize the test database once per session:
-    - Drop all existing tables to ensure a clean state.
-    - Create all tables based on the current models.
-    - Optionally initialize the database with seed data.
-    After tests, drop all tables unless --preserve-db is set.
-    """
     logger.info("Setting up test database...")
-
-    # Drop all tables to ensure a clean slate
     Base.metadata.drop_all(bind=test_engine)
     logger.info("Dropped all existing tables.")
 
-    # Create all tables
     Base.metadata.create_all(bind=test_engine)
     logger.info("Created all tables based on models.")
 
-    # Initialize the database (e.g., run migrations or seed data)
     init_db()
     logger.info("Initialized the test database with initial data.")
 
-    yield  # All tests run here
+    yield
 
-    preserve_db = request.config.getoption("--preserve-db")
-    if preserve_db:
+    if request.config.getoption("--preserve-db"):
         logger.info("Skipping drop_db due to --preserve-db flag.")
     else:
         logger.info("Cleaning up test database...")
@@ -141,23 +111,13 @@ def setup_test_database(request):
 
 @pytest.fixture
 def db_session(request) -> Generator[Session, None, None]:
-    """
-    Provide a test-scoped database session.
-    By default, truncates all tables after each test to ensure isolation,
-    unless --preserve-db is passed.
-    """
     session = TestingSessionLocal()
     try:
         yield session
     finally:
         logger.info("db_session teardown: about to truncate tables.")
-        preserve_db = request.config.getoption("--preserve-db")
-        if preserve_db:
-            logger.info("Skipping table truncation due to --preserve-db flag.")
-        else:
-            logger.info("Truncating all tables now.")
+        if not request.config.getoption("--preserve-db"):
             for table in reversed(Base.metadata.sorted_tables):
-                logger.info(f"Truncating table: {table}")
                 session.execute(table.delete())
             session.commit()
         session.close()
@@ -168,14 +128,10 @@ def db_session(request) -> Generator[Session, None, None]:
 # ======================================================================================
 @pytest.fixture
 def fake_user_data() -> Dict[str, str]:
-    """Provide a dictionary of fake user data."""
     return create_fake_user()
 
 @pytest.fixture
 def test_user(db_session: Session) -> User:
-    """
-    Create and return a single test user.
-    """
     user_data = create_fake_user()
     user = User(**user_data)
     db_session.add(user)
@@ -186,14 +142,6 @@ def test_user(db_session: Session) -> User:
 
 @pytest.fixture
 def seed_users(db_session: Session, request) -> List[User]:
-    """
-    Create multiple test users in the database.
-
-    Usage:
-        @pytest.mark.parametrize("seed_users", [10], indirect=True)
-        def test_many_users(seed_users):
-            # test logic
-    """
     try:
         num_users = request.param
     except AttributeError:
@@ -215,9 +163,6 @@ def seed_users(db_session: Session, request) -> List[User]:
 # ======================================================================================
 @pytest.fixture(scope="session")
 def fastapi_server():
-    """
-    Start and manage a FastAPI test server, if needed for integration tests.
-    """
     server_url = 'http://127.0.0.1:8000/'
     logger.info("Starting test server...")
 
@@ -231,8 +176,7 @@ def fastapi_server():
             raise ServerStartupError("Failed to start test server")
 
         logger.info("Test server started successfully.")
-        yield  # Run all tests that depend on this fixture
-
+        yield
     except Exception as e:
         logger.error(f"Server error: {str(e)}")
         raise
@@ -251,9 +195,6 @@ def fastapi_server():
 # ======================================================================================
 @pytest.fixture(scope="session")
 def browser_context():
-    """
-    Provide a Playwright browser context for UI tests.
-    """
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             headless=True,
@@ -268,9 +209,6 @@ def browser_context():
 
 @pytest.fixture
 def page(browser_context: Browser):
-    """
-    Provide a new browser page for each test.
-    """
     context = browser_context.new_context(
         viewport={'width': 1920, 'height': 1080},
         ignore_https_errors=True
@@ -288,9 +226,6 @@ def page(browser_context: Browser):
 # Pytest Command-Line Options and Test Collection
 # ======================================================================================
 def pytest_addoption(parser):
-    """
-    Add command line options like --preserve-db or --run-slow, if needed.
-    """
     parser.addoption(
         "--preserve-db",
         action="store_true",
@@ -305,15 +240,8 @@ def pytest_addoption(parser):
     )
 
 def pytest_collection_modifyitems(config, items):
-    """
-    Automatically skip slow tests unless --run-slow is specified.
-    """
     if not config.getoption("--run-slow"):
         skip_slow = pytest.mark.skip(reason="use --run-slow to run")
         for item in items:
             if "slow" in item.keywords:
                 item.add_marker(skip_slow)
-
-# ======================================================================================
-# How to Use This File
-# ======================================================================================

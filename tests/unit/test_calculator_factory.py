@@ -1,6 +1,6 @@
 import pytest
 from app.utils.calculator import Add, Sub, Multiply, Divide, CalculationFactory
-from app.schemas.CalculationCreate import CalculationType
+from app.schemas.enums import CalculationType  # ✅ now imports clean enum only
 
 
 def test_add():
@@ -51,5 +51,4 @@ def test_factory_returns_divide():
 
 def test_factory_invalid_type_raises():
     with pytest.raises(ValueError):
-        # Bypass the type checker using type: ignore
         CalculationFactory.get_strategy("FakeType")  # type: ignore[arg-type]

@@ -1,12 +1,5 @@
-from enum import Enum
 from pydantic import BaseModel, ConfigDict, model_validator
-
-
-class CalculationType(str, Enum):
-    ADD = "Add"
-    SUB = "Sub"
-    MULTIPLY = "Multiply"
-    DIVIDE = "Divide"
+from app.schemas.enums import CalculationType  # ✅ shared enum
 
 
 class CalculationCreate(BaseModel):
@@ -15,9 +8,9 @@ class CalculationCreate(BaseModel):
     b: float
     type: CalculationType
 
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def validate_division(self):
-        if self.type == CalculationType.DIVIDE and self.b == 0:
+        if self.type == CalculationType.DIVIDE and self.b == 0: 
             raise ValueError("Cannot divide by zero.")
         return self
 

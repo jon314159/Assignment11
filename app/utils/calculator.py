@@ -1,7 +1,5 @@
-# app/utils/calculator.py
-
+from app.schemas.enums import CalculationType
 from app.operations import add, subtract, multiply, divide
-from app.schemas.CalculationCreate import CalculationType
 
 
 class CalculationStrategy:

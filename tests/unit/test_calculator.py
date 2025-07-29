@@ -3,7 +3,7 @@
 import pytest  # Import the pytest framework for writing and running tests
 from typing import Union  # Import Union for type hinting multiple possible types
 from app.operations import add, subtract, multiply, divide  # Import the calculator functions from the operations module
-
+from app.utils.calculator import CalculationStrategy
 # Define a type alias for numbers that can be either int or float
 Number = Union[int, float]
 
@@ -232,3 +232,8 @@ def test_divide_by_zero() -> None:
     # Assert that the exception message contains the expected error message
     assert "Cannot divide by zero!" in str(excinfo.value), \
         f"Expected error message 'Cannot divide by zero!', but got '{excinfo.value}'"
+
+def test_calculation_strategy_raises_not_implemented():
+    strategy = CalculationStrategy()
+    with pytest.raises(NotImplementedError):
+        strategy.compute(5, 3)

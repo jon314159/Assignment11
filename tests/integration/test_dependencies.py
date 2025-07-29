@@ -4,11 +4,15 @@ from fastapi import HTTPException, status
 from uuid import uuid4
 from datetime import datetime
 
+# Import the function under test
 from app.auth.dependencies import get_current_user
+
+# Import models and schema
 from app.schemas.user import UserResponse
 from app.models.user import User
-
-# Sample test users
+from app.models.calculation import Calculation  # Required to avoid FK error
+from app.schemas.enums import CalculationType  # now clean, no model linkage
+# Sample user for test
 SAMPLE_USER = User(
     id=uuid4(),
     username="testuser",
@@ -20,18 +24,14 @@ SAMPLE_USER = User(
     updated_at=datetime.utcnow()
 )
 
-
-
 @pytest.fixture
 def mock_db():
     return MagicMock()
 
-
 @pytest.fixture
 def mock_verify_token():
-    with patch.object(User, "verify_token") as mock:
+    with patch("app.models.user.User.verify_token") as mock:
         yield mock
-
 
 def test_get_current_user_valid(mock_db, mock_verify_token):
     """Valid token and existing user."""
@@ -51,7 +51,6 @@ def test_get_current_user_valid(mock_db, mock_verify_token):
     mock_db.query.return_value.filter.assert_called_once_with(ANY)
     mock_db.query.return_value.filter.return_value.first.assert_called_once()
 
-
 def test_get_current_user_invalid_token(mock_db, mock_verify_token):
     """Invalid token: no user ID returned."""
     mock_verify_token.return_value = None
@@ -64,7 +63,6 @@ def test_get_current_user_invalid_token(mock_db, mock_verify_token):
 
     mock_verify_token.assert_called_once_with("invalidtoken")
     mock_db.query.assert_not_called()
-
 
 def test_get_current_user_nonexistent_user(mock_db, mock_verify_token):
     """Valid token, but no user found in DB."""
@@ -81,5 +79,3 @@ def test_get_current_user_nonexistent_user(mock_db, mock_verify_token):
     mock_db.query.assert_called_once_with(User)
     mock_db.query.return_value.filter.assert_called_once_with(ANY)
     mock_db.query.return_value.filter.return_value.first.assert_called_once()
-
-

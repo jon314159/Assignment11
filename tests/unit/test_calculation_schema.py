@@ -1,7 +1,10 @@
 from uuid import UUID
 from datetime import datetime
-from app.schemas.CalculationCreate import  CalculationType
-from app.schemas.CalcylationResponse  import CalculationRead
+import pytest
+from pydantic import ValidationError
+
+from app.schemas.CalculationCreate import CalculationType, CalculationCreate
+from app.schemas.CalcylationResponse import CalculationRead
 
 
 def test_calculation_read_valid_data():
@@ -37,8 +40,17 @@ def test_invalid_enum_type():
         "created_at": "2023-10-01T12:00:00Z"
     }
 
-    from pydantic import ValidationError
-    import pytest
-
     with pytest.raises(ValidationError):
         CalculationRead(**data)
+
+
+def test_divide_by_zero_validation_error():
+    with pytest.raises(ValueError, match="Cannot divide by zero."):
+        CalculationCreate(a=10, b=0, type=CalculationType.DIVIDE)
+
+
+def test_valid_division_passes():
+    calc = CalculationCreate(a=10, b=2, type=CalculationType.DIVIDE)
+    assert calc.a == 10
+    assert calc.b == 2
+    assert calc.type == CalculationType.DIVIDE

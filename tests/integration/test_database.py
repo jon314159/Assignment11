@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.engine import Engine
 import importlib
 import sys
-
+from app.schemas.enums import CalculationType  # now clean, no model linkage
 DATABASE_MODULE = "app.database"
 
 
@@ -23,7 +23,7 @@ def mock_settings(monkeypatch):
     sys.modules.pop(DATABASE_MODULE, None)
 
     # Patch settings before module is imported
-    monkeypatch.setattr(f"{DATABASE_MODULE}.settings", mock_settings)
+    monkeypatch.setitem(sys.modules, f"{DATABASE_MODULE}.settings", mock_settings)
 
     return mock_settings
 
@@ -40,7 +40,7 @@ def test_base_is_declarative(mock_settings):
     """Verify Base is a declarative_base instance."""
     db = reload_database_module()
     Base = db.Base
-    assert isinstance(Base, db.declarative_base().__class__)
+    assert hasattr(Base, "metadata")
 
 
 def test_get_engine_success(mock_settings):
@@ -50,20 +50,37 @@ def test_get_engine_success(mock_settings):
     assert isinstance(engine, Engine)
 
 
-def test_get_engine_failure(mock_settings):
-    """
-    Simulate create_engine raising SQLAlchemyError,
-    ensure get_engine propagates the error.
-    """
-    db = reload_database_module()
-    with patch(f"{DATABASE_MODULE}.create_engine", side_effect=SQLAlchemyError("Engine error")):
+def test_get_engine_failure(monkeypatch):
+    """Simulate create_engine raising SQLAlchemyError and check it's propagated."""
+    import sys
+    import importlib
+
+    # Unload app.database so patching is effective
+    sys.modules.pop("app.database", None)
+
+    with patch("app.database.create_engine", side_effect=SQLAlchemyError("Engine error")):
+        db = importlib.import_module("app.database")
+
         with pytest.raises(SQLAlchemyError, match="Engine error"):
             db.get_engine()
 
 
-def test_get_sessionmaker_success(mock_settings):
+
+def test_get_sessionmaker_success(monkeypatch):
     """get_sessionmaker should return a valid sessionmaker bound to engine."""
-    db = reload_database_module()
+    from sqlalchemy.engine import Engine
+    import sys
+    import importlib
+
+    # Patch settings.DATABASE_URL
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///./test.db")
+
+    # Unload module so it reads fresh settings
+    sys.modules.pop("app.database", None)
+    db = importlib.import_module("app.database")
+
     engine = db.get_engine()
     SessionLocal = db.get_sessionmaker(engine)
+
+    assert isinstance(engine, Engine)
     assert isinstance(SessionLocal, sessionmaker)

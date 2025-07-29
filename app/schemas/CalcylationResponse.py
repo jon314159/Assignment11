@@ -2,14 +2,7 @@ from typing import Optional
 from uuid import UUID
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict
-from enum import Enum
-
-
-class CalculationType(str, Enum):
-    ADD = "Add"
-    SUB = "Sub"
-    MULTIPLY = "Multiply"
-    DIVIDE = "Divide"
+from app.schemas.enums import CalculationType  # ✅ use shared enum
 
 
 class CalculationRead(BaseModel):

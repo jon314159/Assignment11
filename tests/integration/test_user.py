@@ -4,6 +4,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.models.user import User
 from tests.conftest import create_fake_user, managed_db_session
+from app.models.calculation import Calculation
 
 
 def test_database_connection(db_session):

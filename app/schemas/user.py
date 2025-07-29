@@ -32,7 +32,6 @@ class UserResponse(BaseModel):
 
 
 class Token(BaseModel):
-    """Schema for authentication token"""
     access_token: str
     token_type: str = "bearer"
     user: UserResponse
@@ -48,8 +47,8 @@ class Token(BaseModel):
                     "last_name": "Doe",
                     "email": "john.doe@example.com",
                     "username": "johndoe",
-                    "created_at": "2023-10-01T12:00:00Z",
                     "is_verified": True,
+                    "created_at": "2023-10-01T12:00:00Z",
                     "updated_at": "2023-10-01T12:00:00Z"
                 }
             }
@@ -58,12 +57,10 @@ class Token(BaseModel):
 
 
 class TokenData(BaseModel):
-    """Schema for token data"""
     id: Optional[UUID] = None
 
 
 class UserLogin(BaseModel):
-    """Schema for user login"""
     username: str
     password: str
 
