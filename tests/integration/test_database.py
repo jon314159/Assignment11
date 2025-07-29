@@ -50,22 +50,20 @@ def test_get_engine_success(mock_settings):
     assert isinstance(engine, Engine)
 
 
-def test_get_engine_failure(monkeypatch):
-    """Simulate create_engine raising SQLAlchemyError."""
-    import sys
-    import importlib
 
-    # Patch sqlalchemy.create_engine BEFORE importing app.database
-    from sqlalchemy import create_engine as real_create_engine
-    monkeypatch.setattr("sqlalchemy.create_engine", lambda *args, **kwargs: (_ for _ in ()).throw(SQLAlchemyError("Engine error")))
+def test_get_engine_failure():
+    """Force create_engine to raise SQLAlchemyError and verify get_engine handles it."""
 
-    # Force reload of app.database
+    # Unload the app.database module first
     sys.modules.pop("app.database", None)
-    db = importlib.import_module("app.database")
 
-    # Now call get_engine, expecting the error
-    with pytest.raises(SQLAlchemyError, match="Engine error"):
-        db.get_engine()
+    # Patch sqlalchemy.create_engine *BEFORE* importing app.database
+    with patch("sqlalchemy.create_engine", side_effect=SQLAlchemyError("Engine error")):
+        db = importlib.import_module("app.database")
+
+        # Run the actual test
+        with pytest.raises(SQLAlchemyError, match="Engine error"):
+            db.get_engine()
 
 
 
